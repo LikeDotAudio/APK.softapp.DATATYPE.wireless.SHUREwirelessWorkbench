@@ -1,6 +1,8 @@
 # DATATYPE.wireless.SHUREwirelessWorkbench
 
 > 📑 **Shure Wireless Workbench importer** — reads a WWB show file (`.shw`, plain XML or zipped) and publishes its wireless channels, one record per channel, on the APK.audio bus.
+>
+> 📚 **Wiki:** [Documentation/README.md](Documentation/README.md) — principles, architecture, delivery.
 
 ---
 
