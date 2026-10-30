@@ -3,5 +3,6 @@
   "category": "DATATYPE",
   "icon": "\ud83d\udcd1",
   "description": "Data Format Importers & Parsers component for APK.audio ecosystem.",
-  "entry": "main.py"
+  "entry": "wwb_importer.rs",
+  "tech": "rust"
 }
