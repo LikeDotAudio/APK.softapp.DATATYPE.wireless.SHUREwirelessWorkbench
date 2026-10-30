@@ -25,7 +25,7 @@ This repo holds source files, not a crate. They are compiled by somebody else:
 
 ### What the parser does (`wwb_importer.rs`)
 
-- `parse_wwb_file(path)` opens the file as a zip and parses every member; if it is not a zip it reads it as text. `parse_wwb_str(text, name)` parses text already in hand.
+- `parse_wwb_bytes(bytes, name)` is the door for anything that may be a zip: bytes starting with the zip magic `PK\x03\x04` are unpacked and every member parsed; anything else is read as XML text. A zip that will not open is an error, not an empty show. `parse_wwb_file(path)` reads the file and calls it; `parse_wwb_str(text, name)` parses XML text already in hand. The `classify_wwb_bytes` / `classify_wwb_str` halves do the same without publishing (and are what the unit tests call).
 - The XML is read **line by line**, not with an XML parser: `<device>` … `</device>` blocks give `manufacturer`, `model`, `device_name` (CDATA), `band` and `zone`; each `<channel number="n">` gives `channel_name` and `frequency` in kHz.
 - A channel is kept only when its frequency converts to between 100 and 3000 MHz. Manufacturer defaults to `Shure` and model to `Generic` when a device does not name them.
 - The result (`WwbParseResult`: `status`, `source_format` = `Shure_WWB_SHW`, `file_path`, `mqtt_topic`, `total_channels`, `channels[]`) is published **retained, QoS 1** to `APK.audio/System/DataMigration/WWB/ImportedData` — the topic is built by `apkaudio_contracts::topics::data_migration("WWB", "ImportedData")`, not typed out. It connects to the loopback broker (`MQTT_LOOPBACK_HOST`, `MQTT_DEFAULT_PORT`) with the broker credentials from `apkaudio_contracts::broker_auth`, waits up to 5 s for the ack, and returns the result either way.
@@ -35,19 +35,22 @@ This repo holds source files, not a crate. They are compiled by somebody else:
 
 ## 🚀 Usage & Integration
 * **Web Portal Entry**: Data Migration → *Wireless Workbench* (GUI frame `Gui_Frames/3_Data_Migration/3_Wireless_Workbench/`). The frame publishes the chosen file on `APK.audio/System/DataMigration/WWB/FilePath` and draws the table from `.../WWB/ImportedData`.
-* **Who calls the parser**: the Data Migration daemon in the orchestrator (`NODE.BareMetal/SRC/Core/ORCHESTRATOR:hunter:VISA/src/services/data_migration.rs`, started from `main.rs`) subscribes `APK.audio/System/DataMigration/+/FilePath`. On a `/WWB/` topic a JSON payload with `raw_content` (or base64 `raw_blob`) goes to `parse_wwb_str`; anything else is taken as a path on disk for `parse_wwb_file`.
+* **Who calls the parser**: the Data Migration daemon in the orchestrator (`NODE.BareMetal/SRC/Core/ORCHESTRATOR:hunter:VISA/src/services/data_migration.rs`, started from `main.rs`) subscribes `APK.audio/System/DataMigration/+/FilePath`. On a `/WWB/` topic a base64 `raw_blob` is decoded and its **bytes** go to `parse_wwb_bytes` (so a zipped `.shw` upload is unzipped — it used to be lossy-decoded to text and parsed as XML, yielding nothing); a `raw_content` string goes to `parse_wwb_str`; anything else is taken as a path on disk for `parse_wwb_file`.
 * **Remote Repository**: https://github.com/LikeDotAudio/APK.softapp.DATATYPE.wireless.SHUREwirelessWorkbench
 
 ### Build and check
 
 ```bash
 cd PODS/POD.THIN/Softapps/MANAGEMENT_AND_UTILITIES/MANAGEMENT.DataMigration
+cargo test --lib wwb               # plain, zipped and broken-zip .shw; publishes nothing
 cargo check --bins --lib          # compiles this parser and test_wwb_importer
 cd PODS/POD.THICK/NODE.BareMetal/SRC/Core
 PYTHONPATH=. python3 TEST:runner:PYTHON/test_handler_status.py   # Entry.py's STATUS — 6 tests
 ```
 
-`cargo run --bin test_wwb_importer` parses the fixture **and publishes the result, retained, to the local broker** — it is not a dry run. Its fixture path is currently wrong — it names `$CARGO_MANIFEST_DIR/DataMigration/3_Wireless_Workbench/test_data/venue.shw`, a layout the crate move left behind — so it exits 1 with `Failed to open WWB file` before anything is published.
+`cargo run --bin test_wwb_importer` parses the fixture **and publishes the result, retained, to the local broker** — it is not a dry run. It reads the fixture from `../../DATATYPE/DATATYPE.wireless.SHUREwirelessWorkbench/test_data/venue.shw` (until 2026-10-30 it looked under the DataMigration crate and exited 1).
+
+`Entry.py`'s `run_tests()` unpacks a one-member zip through the Rust unpacker and checks the answer; it returns `False` when the unpacker is missing or wrong (it used to return `True` unconditionally). `start()`/`stop()` are declared no-ops — the importer holds nothing between calls.
 
 ---
 

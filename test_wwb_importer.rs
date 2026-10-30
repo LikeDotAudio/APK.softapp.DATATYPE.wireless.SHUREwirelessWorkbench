@@ -7,7 +7,9 @@ use std::path::Path;
 mod wwb_importer;
 
 fn main() {
-    let report_path = concat!(env!("CARGO_MANIFEST_DIR"), "/DataMigration/3_Wireless_Workbench/test_data/venue.shw");
+    // The fixture lives beside this file, in DATATYPE.wireless.SHUREwirelessWorkbench/test_data —
+    // not under the DataMigration crate that compiles this runner.
+    let report_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../DATATYPE/DATATYPE.wireless.SHUREwirelessWorkbench/test_data/venue.shw");
     println!("[WWB Test Runner] Testing standalone Wireless Workbench Importer with file: {}", report_path);
 
     match wwb_importer::parse_wwb_file(Path::new(report_path)) {

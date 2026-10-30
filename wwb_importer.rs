@@ -3,7 +3,6 @@
 //! Standalone Shure Wireless Workbench (.shw) Importer written in Rust with MQTT publishing.
 
 use serde::{Deserialize, Serialize};
-use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use zip::ZipArchive;
@@ -39,49 +38,75 @@ pub fn wwb_mqtt_topic() -> String {
         .expect("WWB/ImportedData are literal segments the contract accepts")
 }
 
-/// Parses Shure Wireless Workbench .shw XML or .zip/.shw archives
+/// The four bytes every zip archive starts with (a local file header).
+const ZIP_MAGIC: &[u8] = b"PK\x03\x04";
+
+/// Parses a Shure Wireless Workbench .shw file — plain XML or a zipped .shw — and publishes.
 pub fn parse_wwb_file(file_path: impl AsRef<Path>) -> Result<WwbParseResult, String> {
     let path = file_path.as_ref();
-    if let Ok(file) = File::open(path) {
-        if let Ok(mut archive) = ZipArchive::new(file) {
-            let mut channels = Vec::new();
-            for i in 0..archive.len() {
-                if let Ok(mut zip_file) = archive.by_index(i) {
-                    let mut content = String::new();
-                    if zip_file.read_to_string(&mut content).is_ok() {
-                        parse_wwb_xml_content(&content, &mut channels);
-                    }
-                }
-            }
-            return build_wwb_result(channels, &path.to_string_lossy());
-        } else if let Ok(content) = std::fs::read_to_string(path) {
-            return parse_wwb_str(&content, &path.to_string_lossy());
+    let bytes = std::fs::read(path).map_err(|e| format!("Failed to open WWB file {:?}: {}", path, e))?;
+    parse_wwb_bytes(&bytes, &path.to_string_lossy())
+}
+
+/// Parses the raw bytes of a .shw — what an uploaded `raw_blob` decodes to — and publishes.
+/// Use this, not `parse_wwb_str`, for anything that may be a zip: text decoding destroys one.
+pub fn parse_wwb_bytes(bytes: &[u8], source_name: &str) -> Result<WwbParseResult, String> {
+    let result = classify_wwb_bytes(bytes, source_name)?;
+    publish_result(&result);
+    Ok(result)
+}
+
+/// Parses .shw XML text and publishes.
+pub fn parse_wwb_str(content: &str, source_name: &str) -> Result<WwbParseResult, String> {
+    let result = classify_wwb_str(content, source_name);
+    publish_result(&result);
+    Ok(result)
+}
+
+/// No side effect. A zip (by its magic bytes) is unpacked and every member read as XML;
+/// anything else is read as XML text. A zip that cannot be opened is an error, not an
+/// empty show: lossy-decoding it as text would "succeed" with zero channels.
+pub fn classify_wwb_bytes(bytes: &[u8], source_name: &str) -> Result<WwbParseResult, String> {
+    if !bytes.starts_with(ZIP_MAGIC) {
+        return Ok(classify_wwb_str(&String::from_utf8_lossy(bytes), source_name));
+    }
+    let mut archive = ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| format!("WWB archive {:?} is not a readable zip: {}", source_name, e))?;
+    let mut channels = Vec::new();
+    for i in 0..archive.len() {
+        let mut member = archive
+            .by_index(i)
+            .map_err(|e| format!("WWB archive {:?} member {}: {}", source_name, i, e))?;
+        let mut content = String::new();
+        if member.read_to_string(&mut content).is_ok() {
+            parse_wwb_xml_content(&content, &mut channels);
         }
     }
-    Err(format!("Failed to open WWB file {:?}", path))
+    Ok(wwb_result(channels, source_name))
 }
 
-pub fn parse_wwb_str(content: &str, source_name: &str) -> Result<WwbParseResult, String> {
+/// No side effect: .shw XML text to channels.
+pub fn classify_wwb_str(content: &str, source_name: &str) -> WwbParseResult {
     let mut channels = Vec::new();
     parse_wwb_xml_content(content, &mut channels);
-    build_wwb_result(channels, source_name)
+    wwb_result(channels, source_name)
 }
 
-fn build_wwb_result(channels: Vec<WwbChannel>, source_name: &str) -> Result<WwbParseResult, String> {
-    let result = WwbParseResult {
+fn wwb_result(channels: Vec<WwbChannel>, source_name: &str) -> WwbParseResult {
+    WwbParseResult {
         status: "success".to_string(),
         source_format: "Shure_WWB_SHW".to_string(),
         file_path: source_name.to_string(),
         mqtt_topic: wwb_mqtt_topic(),
         total_channels: channels.len(),
         channels,
-    };
+    }
+}
 
-    if let Ok(json_payload) = serde_json::to_string_pretty(&result) {
+fn publish_result(result: &WwbParseResult) {
+    if let Ok(json_payload) = serde_json::to_string_pretty(result) {
         publish_to_mqtt(&wwb_mqtt_topic(), &json_payload);
     }
-
-    Ok(result)
 }
 
 fn parse_wwb_xml_content(content: &str, channels: &mut Vec<WwbChannel>) {
@@ -222,5 +247,49 @@ pub fn publish_to_mqtt(topic: &str, payload: &str) {
     }
     if acked || connected {
         std::thread::sleep(Duration::from_millis(300));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    const SHOW: &str = include_str!("test_data/venue.shw");
+
+    fn zipped(name: &str, body: &str) -> Vec<u8> {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zw = zip::ZipWriter::new(&mut buf);
+            let opts = zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            zw.start_file(name, opts).unwrap();
+            zw.write_all(body.as_bytes()).unwrap();
+            zw.finish().unwrap();
+        }
+        buf.into_inner()
+    }
+
+    #[test]
+    fn a_zipped_show_reads_the_same_as_the_plain_one() {
+        let plain = classify_wwb_str(SHOW, "venue.shw");
+        assert!(plain.total_channels > 0, "fixture yields channels");
+        let zip = zipped("venue.shw", SHOW);
+        assert!(zip.starts_with(ZIP_MAGIC));
+        let unzipped = classify_wwb_bytes(&zip, "venue.zip").unwrap();
+        assert_eq!(unzipped.total_channels, plain.total_channels);
+        assert_eq!(unzipped.channels[0].frequency_mhz, plain.channels[0].frequency_mhz);
+    }
+
+    #[test]
+    fn plain_xml_bytes_still_parse() {
+        let r = classify_wwb_bytes(SHOW.as_bytes(), "venue.shw").unwrap();
+        assert_eq!(r.total_channels, classify_wwb_str(SHOW, "venue.shw").total_channels);
+    }
+
+    #[test]
+    fn a_broken_zip_is_an_error_not_an_empty_show() {
+        let mut bad = zipped("venue.shw", SHOW);
+        bad.truncate(40);
+        assert!(classify_wwb_bytes(&bad, "broken.zip").is_err());
     }
 }

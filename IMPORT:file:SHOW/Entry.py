@@ -45,18 +45,49 @@ Marker_convert_WWB_SHW_File_report_to_csv = convert_shure_wwb_shw_to_markers
 Marker_convert_wwb_zip_report_to_csv = convert_shure_wwb_shw_to_markers
 
 
-# Inline comment: Logic for csv_to_json_and_publish
-def csv_to_json_and_publish(*args, **kwargs):
-    pass
+# Lifecycle. The importer holds no thread, socket or file between calls, so there is
+# nothing to start or stop: these exist because the importer interface names them,
+# and they say so rather than pretend to do something.
+def start():
+    """No-op by design: the importer is stateless between calls."""
+    return None
 
 
-# Inline comment: Logic for start
-def start(): pass
-# Inline comment: Logic for stop
-def stop(): pass
-# Inline comment: Logic for status
-def status(): return STATUS
-# Inline comment: Logic for run_tests
-def run_tests(): return True
+def stop():
+    """No-op by design: the importer is stateless between calls."""
+    return None
 
-__all__ = ["convert_shure_wwb_shw_to_markers", "Marker_convert_WWB_SHW_File_report_to_csv", "Marker_convert_wwb_zip_report_to_csv", "csv_to_json_and_publish", "MARKER_HEADERS", "STATUS", "start", "stop", "status", "run_tests"]
+
+def status():
+    return STATUS
+
+
+def run_tests():
+    """Unpack a one-member archive through the Rust unpacker and check what comes back.
+
+    False when the unpacker is unavailable or answers wrongly — never True for
+    having run nothing. (It used to return True unconditionally.)"""
+    if not unpack_showfile:
+        return False
+    import json
+    import os
+    import tempfile
+    import zipfile
+    member = {"self_test": True}
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "self_test.shw")
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr("show.json", json.dumps(member))
+        try:
+            got = unpack_showfile(path)
+        except Exception as e:
+            matrix_log("ui", "importer", "run_tests", f"❌ Showfile unpacker self-test raised: {e}", "ERROR")
+            return False
+    # the unpacker returns each member's JSON as a string (see the header)
+    return isinstance(got, dict) and json.loads(got.get("show.json", "null")) == member
+
+
+# csv_to_json_and_publish() used to sit here: an empty function exported under a name
+# that promised a publish. Nothing called it, and the publish lives in the Rust importer
+# (wwb_importer.rs, parse_wwb_* -> publish_to_mqtt), so it is gone.
+__all__ = ["convert_shure_wwb_shw_to_markers", "Marker_convert_WWB_SHW_File_report_to_csv", "Marker_convert_wwb_zip_report_to_csv", "MARKER_HEADERS", "STATUS", "start", "stop", "status", "run_tests"]
