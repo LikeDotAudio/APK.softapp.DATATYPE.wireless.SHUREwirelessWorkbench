@@ -63,3 +63,7 @@ PYTHONPATH=. python3 TEST:runner:PYTHON/test_handler_status.py   # Entry.py's ST
 ## 🗺 Plans
 
 None in this repo. Plans live in `Documentation/🛣Roadmap/roadmap.htm` of the APK.audio repo.
+
+<!-- wiki:smoke -->
+**Smoke test** — ✅ PASS 1/1 since 2026-10-30 12:51 EDT — [results](Documentation/%F0%9F%A7%A9Manual%20and%20Artifacts/SMOKE.md)
+<!-- /wiki:smoke -->
