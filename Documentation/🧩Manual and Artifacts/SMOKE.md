@@ -12,4 +12,4 @@ Is `DATATYPE.wireless.SHUREwirelessWorkbench` deployed? Written by `.apk.scripts
 
 Re-run: `python3 .apk.scripts/smoke.py PODS/POD.THIN/Softapps/DATATYPE/DATATYPE.wireless.SHUREwirelessWorkbench`
 
-<!-- smoke:sig 399c85f69055 since 2026-10-30 12:51 EDT -->
+<!-- smoke:sig 28ad285d2a19 since 2026-10-30 12:51 EDT -->
