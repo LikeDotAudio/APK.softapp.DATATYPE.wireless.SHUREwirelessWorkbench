@@ -56,7 +56,9 @@ pub fn parse_wwb_bytes(bytes: &[u8], source_name: &str) -> Result<WwbParseResult
     Ok(result)
 }
 
-/// Parses .shw XML text and publishes.
+/// Parses .shw XML text and publishes. Called by the data-migration daemon for a
+/// `raw_content` payload; the standalone runner, which compiles this file too, does not.
+#[allow(dead_code)]
 pub fn parse_wwb_str(content: &str, source_name: &str) -> Result<WwbParseResult, String> {
     let result = classify_wwb_str(content, source_name);
     publish_result(&result);
