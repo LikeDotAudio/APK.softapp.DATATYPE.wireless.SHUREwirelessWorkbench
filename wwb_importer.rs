@@ -1,12 +1,14 @@
 // Part of the APK.audio project — http://APK.audio — made by Anthony Kuzub
 // MIT Licence. Free, for everyone, for ever. Full text in LICENSE at the root.
-//! Standalone Shure Wireless Workbench (.shw) Importer written in Rust with MQTT publishing.
+//! Standalone Shure Wireless Workbench (.shw) Importer written in Rust. It does not
+//! publish: the data-migration daemon publishes the result on the broker it was
+//! started with (LOOSE-datatype-datatype-wireless).
 
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::Path;
 use zip::ZipArchive;
-use apkaudio_contracts::topics::{self, MQTT_DEFAULT_PORT, MQTT_LOOPBACK_HOST};
+use apkaudio_contracts::topics;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WwbChannel {
@@ -27,6 +29,8 @@ pub struct WwbParseResult {
     pub file_path: String,
     pub mqtt_topic: String,
     pub total_channels: usize,
+    /// `<channel>` blocks the show carried with no usable frequency.
+    pub skipped_rows: usize,
     pub channels: Vec<WwbChannel>,
 }
 
@@ -41,28 +45,24 @@ pub fn wwb_mqtt_topic() -> String {
 /// The four bytes every zip archive starts with (a local file header).
 const ZIP_MAGIC: &[u8] = b"PK\x03\x04";
 
-/// Parses a Shure Wireless Workbench .shw file — plain XML or a zipped .shw — and publishes.
+/// Parses a Shure Wireless Workbench .shw file — plain XML or a zipped .shw. No side effect.
 pub fn parse_wwb_file(file_path: impl AsRef<Path>) -> Result<WwbParseResult, String> {
     let path = file_path.as_ref();
     let bytes = std::fs::read(path).map_err(|e| format!("Failed to open WWB file {:?}: {}", path, e))?;
     parse_wwb_bytes(&bytes, &path.to_string_lossy())
 }
 
-/// Parses the raw bytes of a .shw — what an uploaded `raw_blob` decodes to — and publishes.
+/// Parses the raw bytes of a .shw — what an uploaded `raw_blob` decodes to. No side effect.
 /// Use this, not `parse_wwb_str`, for anything that may be a zip: text decoding destroys one.
 pub fn parse_wwb_bytes(bytes: &[u8], source_name: &str) -> Result<WwbParseResult, String> {
-    let result = classify_wwb_bytes(bytes, source_name)?;
-    publish_result(&result);
-    Ok(result)
+    classify_wwb_bytes(bytes, source_name)
 }
 
-/// Parses .shw XML text and publishes. Called by the data-migration daemon for a
+/// Parses .shw XML text. No side effect. Called by the data-migration daemon for a
 /// `raw_content` payload; the standalone runner, which compiles this file too, does not.
 #[allow(dead_code)]
 pub fn parse_wwb_str(content: &str, source_name: &str) -> Result<WwbParseResult, String> {
-    let result = classify_wwb_str(content, source_name);
-    publish_result(&result);
-    Ok(result)
+    Ok(classify_wwb_str(content, source_name))
 }
 
 /// No side effect. A zip (by its magic bytes) is unpacked and every member read as XML;
@@ -75,28 +75,30 @@ pub fn classify_wwb_bytes(bytes: &[u8], source_name: &str) -> Result<WwbParseRes
     let mut archive = ZipArchive::new(std::io::Cursor::new(bytes))
         .map_err(|e| format!("WWB archive {:?} is not a readable zip: {}", source_name, e))?;
     let mut channels = Vec::new();
+    let mut skipped = 0usize;
     for i in 0..archive.len() {
         let mut member = archive
             .by_index(i)
             .map_err(|e| format!("WWB archive {:?} member {}: {}", source_name, i, e))?;
         let mut content = String::new();
         if member.read_to_string(&mut content).is_ok() {
-            parse_wwb_xml_content(&content, &mut channels);
+            skipped += parse_wwb_xml_content(&content, &mut channels);
         }
     }
-    Ok(wwb_result(channels, source_name))
+    Ok(wwb_result(channels, skipped, source_name))
 }
 
 /// No side effect: .shw XML text to channels.
 pub fn classify_wwb_str(content: &str, source_name: &str) -> WwbParseResult {
     let mut channels = Vec::new();
-    parse_wwb_xml_content(content, &mut channels);
-    wwb_result(channels, source_name)
+    let skipped = parse_wwb_xml_content(content, &mut channels);
+    wwb_result(channels, skipped, source_name)
 }
 
-fn wwb_result(channels: Vec<WwbChannel>, source_name: &str) -> WwbParseResult {
+fn wwb_result(channels: Vec<WwbChannel>, skipped_rows: usize, source_name: &str) -> WwbParseResult {
     WwbParseResult {
-        status: "success".to_string(),
+        status: status_for(channels.len()),
+        skipped_rows,
         source_format: "Shure_WWB_SHW".to_string(),
         file_path: source_name.to_string(),
         mqtt_topic: wwb_mqtt_topic(),
@@ -105,13 +107,9 @@ fn wwb_result(channels: Vec<WwbChannel>, source_name: &str) -> WwbParseResult {
     }
 }
 
-fn publish_result(result: &WwbParseResult) {
-    if let Ok(json_payload) = serde_json::to_string_pretty(result) {
-        publish_to_mqtt(&wwb_mqtt_topic(), &json_payload);
-    }
-}
-
-fn parse_wwb_xml_content(content: &str, channels: &mut Vec<WwbChannel>) {
+/// Appends every channel with a usable frequency; returns how many `<channel>` blocks had none.
+fn parse_wwb_xml_content(content: &str, channels: &mut Vec<WwbChannel>) -> usize {
+    let mut skipped = 0usize;
     let mut current_manufacturer = "Shure".to_string();
     let mut current_model = "Generic".to_string();
     let mut current_device_name = "".to_string();
@@ -147,9 +145,12 @@ fn parse_wwb_xml_content(content: &str, channels: &mut Vec<WwbChannel>) {
             }
         } else if trimmed.starts_with("</channel>") {
             if in_channel {
-                if let Some(f_khz) = freq_khz {
-                    let freq_mhz = f_khz / 1000.0;
-                    if freq_mhz > 100.0 && freq_mhz < 3000.0 {
+                let usable = freq_khz.map(|k| k / 1000.0).filter(|m| *m > 100.0 && *m < 3000.0);
+                if usable.is_none() {
+                    skipped += 1;
+                }
+                if let Some(freq_mhz) = usable {
+                    {
                         channels.push(WwbChannel {
                             device_name: current_device_name.clone(),
                             manufacturer: current_manufacturer.clone(),
@@ -189,6 +190,7 @@ fn parse_wwb_xml_content(content: &str, channels: &mut Vec<WwbChannel>) {
             }
         }
     }
+    skipped
 }
 
 fn extract_xml_cdata(line: &str) -> String {
@@ -211,45 +213,10 @@ fn extract_xml_text(line: &str) -> String {
     "".to_string()
 }
 
-pub fn publish_to_mqtt(topic: &str, payload: &str) {
-    use rumqttc::{Client, MqttOptions, Event, Packet, QoS};
-    use std::time::Duration;
-
-    let mut mqttoptions = MqttOptions::new("apkaudio-wwb-importer", MQTT_LOOPBACK_HOST, MQTT_DEFAULT_PORT);
-    mqttoptions.set_keep_alive(Duration::from_secs(10));
-    if let Some((username, password)) = apkaudio_contracts::broker_auth::credentials() {
-        mqttoptions.set_credentials(username, password);
-    }
-    mqttoptions.set_max_packet_size(5_000_000, 5_000_000);
-
-    let (client, mut connection) = Client::new(mqttoptions, 10);
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    let mut connected = false;
-    let mut acked = false;
-
-    for notification in connection.iter() {
-        if let Ok(event) = notification {
-            match event {
-                Event::Incoming(Packet::ConnAck(_)) => {
-                    connected = true;
-                    let _ = client.publish(topic, QoS::AtLeastOnce, true, payload.as_bytes());
-                    println!("[WWB MQTT PUBLISHER] Connected & Published payload to '{}'", topic);
-                }
-                Event::Incoming(Packet::PubAck(_)) => {
-                    println!("[WWB MQTT PUBLISHER] Broker Acked payload on '{}'", topic);
-                    acked = true;
-                    break;
-                }
-                _ => {}
-            }
-        }
-        if std::time::Instant::now() > deadline {
-            break;
-        }
-    }
-    if acked || connected {
-        std::thread::sleep(Duration::from_millis(300));
-    }
+/// "success" only when the report yielded channels; a parse that found none is
+/// "empty", never a success the panel would draw as an imported, blank table.
+fn status_for(channels: usize) -> String {
+    if channels > 0 { "success" } else { "empty" }.to_string()
 }
 
 #[cfg(test)]
