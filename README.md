@@ -15,7 +15,7 @@
 
 ## ⚙️ Repository Overview
 
-This repo holds source files, not a crate. They are compiled by somebody else:
+The parser is source compiled by somebody else; `SRC/` is the worker crate that runs it on its own:
 
 | File | What it is | Built / loaded by |
 | :-- | :-- | :-- |
@@ -24,6 +24,8 @@ This repo holds source files, not a crate. They are compiled by somebody else:
 | `IMPORT:file:SHOW/Entry.py` | The Python edge: hands a show file to `oaRustCore.showfile_unpacker` | loaded by file path; its `STATUS` is asserted by `NODE.BareMetal/SRC/Core/TEST:runner:PYTHON/test_handler_status.py` |
 | `test_data/venue.shw` | A real WWB 7.4 show file (plain XML, 100 devices, 186 channels) | the runner |
 | `display.json` | Launcher manifest (category `DATATYPE`) | the OS app tree (`OS/system/project-apps.json`) |
+| `SRC/` | The worker crate `apk-worker-wireless-wwb`: `wwb_importer.rs` (by `#[path]`) behind a job loop on `apk-plugin-runner`, with its `config.ini` (section `[wireless_wwb]`) | `cargo test --manifest-path SRC/Cargo.toml`; the image `worker-wireless-wwb:local` |
+| `Docker/` | The worker stack: container `Worker-WIRELESS_WWB`, project `workers`, no port | included by `PODS/POD.workers/Docker/docker-compose.yml` |
 
 ### What the parser does (`wwb_importer.rs`)
 
@@ -34,6 +36,21 @@ This repo holds source files, not a crate. They are compiled by somebody else:
 - Each channel record: `device_name`, `manufacturer`, `model`, `band`, `channel_number`, `channel_name`, `frequency_mhz`, `zone` — the eight headers the GUI frame `WEB.Frontend-Assets/SRC/FrontEnd/Gui_Frames/3_Data_Migration/3_Wireless_Workbench/Wireless_Workbench_Importer.json` declares for its table.
 
 ---
+
+### As a worker (`Worker-WIRELESS_WWB`, POD.workers)
+
+The same parser answers jobs on the bus (LOOSE-workers-convert-rest). A client subscribes to
+`APK.audio/System/Protocols/wireless_wwb/incoming/result`, then publishes
+`{"job_id": "<yours>", "filename": "venue.shw", ...}` to `APK.audio/System/Protocols/wireless_wwb/outgoing/job`
+with the file as "content_b64" (the file's bytes; a zipped show does not survive as text — plain XML may come as "text"). The answer carries the same `job_id`, `ok`, and the parse result of
+`classify_wwb_bytes` under `result`; a malformed job or one over `max_job_bytes` (16 MiB, `SRC/config.ini`) comes
+back `ok: false` with an `error`. Nothing is retained and the worker opens no port. Measured
+2026-10-30: the fixture `test_data/venue.shw` sent as a job came back `ok: true` with 186 channels.
+
+```bash
+docker compose -f PODS/POD.workers/Docker/docker-compose.yml up -d --build wireless-wwb
+cargo test --manifest-path SRC/Cargo.toml        # handle_job on the fixture, the self test
+```
 
 ## 🚀 Usage & Integration
 * **Web Portal Entry**: Data Migration → *Wireless Workbench* (GUI frame `Gui_Frames/3_Data_Migration/3_Wireless_Workbench/`). The frame publishes the chosen file on `APK.audio/System/DataMigration/WWB/FilePath` and draws the table from `.../WWB/ImportedData`.

@@ -2,13 +2,14 @@
 
 ← [Wiki home](../README.md)
 
-No build of its own and no live URL. The importer ships compiled into the orchestrator:
+The importer ships compiled into the orchestrator, and as a worker image of its own:
 
 | What | Built by | Lands |
 |---|---|---|
 | `wwb_importer.rs` | `MANAGEMENT.DataMigration` (`apkaudio-data-migration`) compiles it by `#[path]`; `oaRustCore` re-exports that crate as `data_migration`; `apkaudio-orchestrator` links it. `NODE.BareMetal/Docker/Dockerfile` copies `PODS/POD.THIN/Softapps` so the path resolves in the image. | the **Node-BareMetal** container (`node-baremetal:local`); after an edit, rebuild that stack (`MANAGER.Docktor/K8/up-stack.sh NODE.BareMetal`). The daemon that feeds it a `raw_blob` as bytes is in the same image (`ORCHESTRATOR:hunter:VISA/src/services/data_migration.rs`). |
 | `IMPORT:file:SHOW/Entry.py` | nothing builds it; it is loaded by file path | read by `test_handler_status.py` |
 | the files | `PODS/POD.THIN/Softapps` copied into **WEB.Frontend-Assets**; the monorepo's FTPS job uploads the checkout to apk.audio | nothing opens them there |
+| `SRC/` + `wwb_importer.rs` | `Docker/Dockerfile`, context the repo root (it links `contracts/` and `apk-plugin-runner`); `cargo build --release --locked` | the **Worker-WIRELESS_WWB** container (`worker-wireless-wwb:local`, project `workers`, no port); after an edit, `docker compose -f PODS/POD.workers/Docker/docker-compose.yml up -d --build wireless-wwb` |
 
 Remote: `https://github.com/LikeDotAudio/APK.softapp.DATATYPE.wireless.SHUREwirelessWorkbench.git` (no workflow of its own).
 

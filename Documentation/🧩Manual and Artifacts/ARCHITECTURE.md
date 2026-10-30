@@ -38,3 +38,13 @@ cargo test --lib wwb        # plain, zipped, broken zip, minified, nothing inven
 cd PODS/POD.THICK/NODE.BareMetal/SRC/Core
 PYTHONPATH=. python3 -m pytest -q "TEST:runner:PYTHON/test_handler_status.py"
 ```
+
+## As a worker
+
+`SRC/src/lib.rs` `handle_job` decodes a job (`text` or `content_b64`), refuses one over
+`max_job_bytes` (16 MiB), runs `classify_wwb_bytes` and returns `{job_id, tool, ok, result, error, elapsed_ms}`
+— always, so a caller waiting on a `job_id` is never left waiting. `run_job_agent` feeds it from
+`APK.audio/System/Protocols/wireless_wwb/outgoing/job` and answers on `…/incoming/result`, neither
+retained. `apk-plugin-runner` adds the retained `incoming/api` description, the config, the will and
+the self test (`SRC/src/self_test.rs`: a probe file compiled into the binary runs through
+`handle_job`). The pod is `PODS/POD.workers`.
