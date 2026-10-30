@@ -22,8 +22,11 @@ fn main() {
             
             println!("\n--- Sample Extracted WWB Channels (First 15) ---");
             for (idx, ch) in result.channels.iter().take(15).enumerate() {
+                // A field the show leaves out prints as "—", as the importer leaves it None.
+                let model = ch.model.as_deref().unwrap_or("—");
+                let number = ch.channel_number.map(|n| n.to_string()).unwrap_or_else(|| "—".into());
                 println!("[{:02}] Dev: '{}' | Model: '{}' | Band: '{}' | Ch #{}: '{}' | Freq: {:.3} MHz",
-                    idx + 1, ch.device_name, ch.model, ch.band, ch.channel_number, ch.channel_name, ch.frequency_mhz);
+                    idx + 1, ch.device_name, model, ch.band, number, ch.channel_name, ch.frequency_mhz);
             }
             println!("===============================================");
         }

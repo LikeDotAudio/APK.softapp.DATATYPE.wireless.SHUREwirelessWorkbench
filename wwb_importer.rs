@@ -13,10 +13,13 @@ use apkaudio_contracts::topics;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WwbChannel {
     pub device_name: String,
-    pub manufacturer: String,
-    pub model: String,
+    /// The device's `<manufacturer>`; `None` when the show does not say — never guessed.
+    pub manufacturer: Option<String>,
+    /// The device's `<model>`; `None` when the show does not say — never guessed.
+    pub model: Option<String>,
     pub band: String,
-    pub channel_number: u32,
+    /// The `<channel number="…">` attribute; `None` when absent or not a number.
+    pub channel_number: Option<u32>,
     pub channel_name: String,
     pub frequency_mhz: f64,
     pub zone: String,
@@ -107,110 +110,269 @@ fn wwb_result(channels: Vec<WwbChannel>, skipped_rows: usize, source_name: &str)
     }
 }
 
+/// One piece of the document, in order: an element opening (name, attribute
+/// text), an element closing, or character data (CDATA unwrapped, the five
+/// predefined entities and numeric references decoded).
+#[derive(Debug, PartialEq)]
+enum XmlEvent<'a> {
+    Open(&'a str, &'a str),
+    Close(&'a str),
+    Text(String),
+}
+
+/// A small XML scanner: tags, end tags, self-closing tags, CDATA; comments,
+/// processing instructions and DOCTYPE skipped. It reads the markup, not the
+/// line breaks, so a minified show reads the same as an indented one.
+fn xml_events(content: &str) -> Vec<XmlEvent<'_>> {
+    let mut out = Vec::new();
+    let mut rest = content;
+    while !rest.is_empty() {
+        let Some(lt) = rest.find('<') else {
+            push_text(&mut out, rest);
+            break;
+        };
+        push_text(&mut out, &rest[..lt]);
+        rest = &rest[lt..];
+        if let Some(body) = rest.strip_prefix("<![CDATA[") {
+            let end = body.find("]]>").unwrap_or(body.len());
+            out.push(XmlEvent::Text(body[..end].to_string()));
+            rest = body.get(end + 3..).unwrap_or("");
+        } else if let Some(body) = rest.strip_prefix("<!--") {
+            rest = body.find("-->").map(|e| &body[e + 3..]).unwrap_or("");
+        } else if rest.starts_with("<?") || rest.starts_with("<!") {
+            rest = rest.find('>').map(|e| &rest[e + 1..]).unwrap_or("");
+        } else {
+            let end = tag_end(rest);
+            let tag = &rest[1..end];
+            rest = rest.get(end + 1..).unwrap_or("");
+            if let Some(name) = tag.strip_prefix('/') {
+                out.push(XmlEvent::Close(name.trim()));
+                continue;
+            }
+            let (tag, self_closing) = match tag.strip_suffix('/') {
+                Some(t) => (t, true),
+                None => (tag, false),
+            };
+            let split = tag.find(|c: char| c.is_whitespace()).unwrap_or(tag.len());
+            let (name, attrs) = (&tag[..split], &tag[split..]);
+            out.push(XmlEvent::Open(name, attrs));
+            if self_closing {
+                out.push(XmlEvent::Close(name));
+            }
+        }
+    }
+    out
+}
+
+/// Index of the `>` closing the tag at the start of `s`, skipping any inside quoted attribute values.
+fn tag_end(s: &str) -> usize {
+    let mut quote: Option<char> = None;
+    for (i, c) in s.char_indices().skip(1) {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '>') => return i,
+            _ => {}
+        }
+    }
+    s.len()
+}
+
+fn push_text<'a>(out: &mut Vec<XmlEvent<'a>>, raw: &str) {
+    if !raw.trim().is_empty() {
+        out.push(XmlEvent::Text(decode_entities(raw)));
+    }
+}
+
+fn decode_entities(raw: &str) -> String {
+    if !raw.contains('&') {
+        return raw.to_string();
+    }
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        let Some(semi) = rest.find(';').filter(|&i| i <= 10) else {
+            out.push('&');
+            rest = &rest[1..];
+            continue;
+        };
+        let name = &rest[1..semi];
+        let decoded = match name {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            _ => name
+                .strip_prefix("#x")
+                .and_then(|h| u32::from_str_radix(h, 16).ok())
+                .or_else(|| name.strip_prefix('#').and_then(|d| d.parse().ok()))
+                .and_then(char::from_u32),
+        };
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The value of attribute `key` in a tag's attribute text.
+fn attribute(attrs: &str, key: &str) -> Option<String> {
+    let mut rest = attrs;
+    while let Some(pos) = rest.find(key) {
+        let before_ok = rest[..pos].chars().last().is_none_or(char::is_whitespace);
+        let after = rest[pos + key.len()..].trim_start();
+        if before_ok {
+            if let Some(v) = after.strip_prefix('=') {
+                let v = v.trim_start();
+                let q = v.chars().next()?;
+                if q == '"' || q == '\'' {
+                    let body = &v[1..];
+                    return body.find(q).map(|e| decode_entities(&body[..e]));
+                }
+            }
+        }
+        rest = &rest[pos + key.len()..];
+    }
+    None
+}
+
+/// What the enclosing `<device>` says about itself — only what it says.
+#[derive(Default, Clone)]
+struct DeviceFields {
+    manufacturer: Option<String>,
+    model: Option<String>,
+    device_name: String,
+    band: String,
+    zone: String,
+}
+
 /// Appends every channel with a usable frequency; returns how many `<channel>` blocks had none.
+///
+/// A device's fields are its own child elements, read wherever they sit
+/// relative to its channels; a channel outside any `<device>` carries no
+/// device fields. Nothing missing is filled in: no manufacturer is `None`,
+/// not "Shure"; no `number=` is `None`, not the previous channel's number.
 fn parse_wwb_xml_content(content: &str, channels: &mut Vec<WwbChannel>) -> usize {
+    struct Pending {
+        number: Option<u32>,
+        name: String,
+        freq_khz: Option<f64>,
+    }
     let mut skipped = 0usize;
-    let mut current_manufacturer = "Shure".to_string();
-    let mut current_model = "Generic".to_string();
-    let mut current_device_name = "".to_string();
-    let mut current_band = "".to_string();
-    let mut current_zone = "".to_string();
+    let mut stack: Vec<&str> = Vec::new();
+    // Each open <device>, innermost last, and the channels it holds, finished once it closes.
+    let mut devices: Vec<(DeviceFields, Vec<Pending>)> = Vec::new();
+    let mut channel: Option<Pending> = None;
+    let mut loose: Vec<Pending> = Vec::new();
+    let mut text = String::new();
 
-    let mut in_device = false;
-    let mut in_channel = false;
-    let mut channel_num = 1;
-    let mut ch_name = "".to_string();
-    let mut freq_khz: Option<f64> = None;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("<device>") {
-            in_device = true;
-            current_manufacturer = "Shure".to_string();
-            current_model = "Generic".to_string();
-            current_device_name = "".to_string();
-            current_band = "".to_string();
-            current_zone = "".to_string();
-        } else if trimmed.starts_with("</device>") {
-            in_device = false;
-        } else if trimmed.starts_with("<channel ") {
-            in_channel = true;
-            ch_name = "".to_string();
-            freq_khz = None;
-            if let Some(pos) = trimmed.find("number=\"") {
-                let rest = &trimmed[pos + 8..];
-                if let Some(end) = rest.find('"') {
-                    channel_num = rest[..end].parse::<u32>().unwrap_or(1);
-                }
+    let finish = |dev: &DeviceFields, list: Vec<Pending>, channels: &mut Vec<WwbChannel>, skipped: &mut usize| {
+        for ch in list {
+            match ch.freq_khz.map(|k| k / 1000.0).filter(|m| *m > 100.0 && *m < 3000.0) {
+                Some(frequency_mhz) => channels.push(WwbChannel {
+                    device_name: dev.device_name.clone(),
+                    manufacturer: dev.manufacturer.clone(),
+                    model: dev.model.clone(),
+                    band: dev.band.clone(),
+                    channel_number: ch.number,
+                    channel_name: ch.name,
+                    frequency_mhz,
+                    zone: dev.zone.clone(),
+                }),
+                None => *skipped += 1,
             }
-        } else if trimmed.starts_with("</channel>") {
-            if in_channel {
-                let usable = freq_khz.map(|k| k / 1000.0).filter(|m| *m > 100.0 && *m < 3000.0);
-                if usable.is_none() {
-                    skipped += 1;
+        }
+    };
+
+    for event in xml_events(content) {
+        match event {
+            XmlEvent::Open(name, attrs) => {
+                text.clear();
+                if name == "device" {
+                    devices.push((DeviceFields::default(), Vec::new()));
+                } else if name == "channel" {
+                    channel = Some(Pending {
+                        number: attribute(attrs, "number").and_then(|n| n.trim().parse().ok()),
+                        name: String::new(),
+                        freq_khz: None,
+                    });
                 }
-                if let Some(freq_mhz) = usable {
-                    {
-                        channels.push(WwbChannel {
-                            device_name: current_device_name.clone(),
-                            manufacturer: current_manufacturer.clone(),
-                            model: current_model.clone(),
-                            band: current_band.clone(),
-                            channel_number: channel_num,
-                            channel_name: ch_name.clone(),
-                            frequency_mhz: freq_mhz,
-                            zone: current_zone.clone(),
-                        });
+                stack.push(name);
+            }
+            XmlEvent::Text(t) => text.push_str(&t),
+            XmlEvent::Close(name) => {
+                // Pop to the matching open tag; a stray close tag is ignored.
+                let Some(depth) = stack.iter().rposition(|n| *n == name) else { continue };
+                stack.truncate(depth);
+                let parent = stack.last().copied();
+                let value = text.trim().to_string();
+                text.clear();
+                match (name, parent) {
+                    ("channel", _) => {
+                        if let Some(ch) = channel.take() {
+                            match devices.last_mut() {
+                                Some((_, list)) => list.push(ch),
+                                None => loose.push(ch),
+                            }
+                        }
                     }
-                }
-            }
-            in_channel = false;
-        }
-
-        if in_device && !in_channel {
-            if trimmed.starts_with("<manufacturer") {
-                current_manufacturer = extract_xml_cdata(trimmed);
-            } else if trimmed.starts_with("<model") {
-                current_model = extract_xml_cdata(trimmed);
-            } else if trimmed.starts_with("<device_name") {
-                current_device_name = extract_xml_cdata(trimmed);
-            } else if trimmed.starts_with("<band") {
-                current_band = extract_xml_text(trimmed);
-            } else if trimmed.starts_with("<zone") {
-                current_zone = extract_xml_text(trimmed);
-            }
-        } else if in_channel {
-            if trimmed.starts_with("<channel_name") {
-                ch_name = extract_xml_cdata(trimmed);
-            } else if trimmed.starts_with("<frequency") {
-                let freq_str = extract_xml_text(trimmed);
-                if let Ok(f) = freq_str.parse::<f64>() {
-                    freq_khz = Some(f);
+                    ("device", _) => {
+                        if let Some((dev, list)) = devices.pop() {
+                            finish(&dev, list, channels, &mut skipped);
+                        }
+                    }
+                    ("channel_name", Some("channel")) => {
+                        if let Some(ch) = channel.as_mut() {
+                            ch.name = value;
+                        }
+                    }
+                    ("frequency", Some("channel")) => {
+                        if let Some(ch) = channel.as_mut() {
+                            ch.freq_khz = value.parse().ok();
+                        }
+                    }
+                    (field, Some("device")) => {
+                        if let Some((dev, _)) = devices.last_mut() {
+                            let present = Some(value.clone()).filter(|v| !v.is_empty());
+                            match field {
+                                "manufacturer" => dev.manufacturer = present,
+                                "model" => dev.model = present,
+                                "device_name" => dev.device_name = value,
+                                "band" => dev.band = value,
+                                "zone" => dev.zone = value,
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
     }
+    // An unterminated document: what was read still counts, as it did line by line.
+    if let Some(ch) = channel.take() {
+        match devices.last_mut() {
+            Some((_, list)) => list.push(ch),
+            None => loose.push(ch),
+        }
+    }
+    while let Some((dev, list)) = devices.pop() {
+        finish(&dev, list, channels, &mut skipped);
+    }
+    finish(&DeviceFields::default(), loose, channels, &mut skipped);
     skipped
-}
-
-fn extract_xml_cdata(line: &str) -> String {
-    if let Some(start) = line.find("<![CDATA[") {
-        let rest = &line[start + 9..];
-        if let Some(end) = rest.find("]]>") {
-            return rest[..end].to_string();
-        }
-    }
-    extract_xml_text(line)
-}
-
-fn extract_xml_text(line: &str) -> String {
-    if let Some(start) = line.find('>') {
-        let rest = &line[start + 1..];
-        if let Some(end) = rest.find('<') {
-            return rest[..end].to_string();
-        }
-    }
-    "".to_string()
 }
 
 /// "success" only when the report yielded channels; a parse that found none is
@@ -253,6 +415,49 @@ mod tests {
     fn plain_xml_bytes_still_parse() {
         let r = classify_wwb_bytes(SHOW.as_bytes(), "venue.shw").unwrap();
         assert_eq!(r.total_channels, classify_wwb_str(SHOW, "venue.shw").total_channels);
+    }
+
+    #[test]
+    fn the_venue_fixture_yields_its_186_channels() {
+        let r = classify_wwb_str(SHOW, "venue.shw");
+        assert_eq!(r.total_channels, 186);
+        let first = &r.channels[0];
+        assert_eq!((first.manufacturer.as_deref(), first.model.as_deref()), (Some("Shure"), Some("PSM1000")));
+        assert_eq!((first.device_name.as_str(), first.band.as_str(), first.channel_number), ("P10T", "G10", Some(1)));
+    }
+
+    #[test]
+    fn a_minified_show_reads_the_same_as_the_indented_one() {
+        let minified: String = SHOW.lines().map(str::trim).collect();
+        assert_eq!(minified.lines().count(), 1);
+        let a = classify_wwb_str(SHOW, "venue.shw");
+        let b = classify_wwb_str(&minified, "venue.min.shw");
+        assert_eq!(serde_json::to_string(&a.channels).unwrap(), serde_json::to_string(&b.channels).unwrap());
+    }
+
+    #[test]
+    fn what_the_show_leaves_out_stays_out() {
+        let xml = r#"<show><inventory><device><device_name><![CDATA[RX & 1]]></device_name>
+            <channel><channel_name>A &amp; B</channel_name><frequency>470125</frequency></channel>
+            <channel number="7"><frequency>471000</frequency></channel></device></inventory></show>"#;
+        let r = classify_wwb_str(xml, "bare.shw");
+        assert_eq!(r.total_channels, 2);
+        let (a, b) = (&r.channels[0], &r.channels[1]);
+        assert_eq!((a.manufacturer.clone(), a.model.clone()), (None, None), "no Shure / Generic invented");
+        assert_eq!(a.channel_number, None, "no number= is no number, not 1");
+        assert_eq!(b.channel_number, Some(7));
+        assert_eq!((a.device_name.as_str(), a.channel_name.as_str()), ("RX & 1", "A & B"));
+    }
+
+    #[test]
+    fn a_channel_after_its_device_closes_does_not_inherit_it() {
+        let xml = r#"<show><device><manufacturer>Sennheiser</manufacturer><model>EM 6000</model>
+            <channel number="1"><frequency>500000</frequency></channel></device>
+            <channel number="2"><frequency>600000</frequency></channel></show>"#;
+        let r = classify_wwb_str(xml, "two.shw");
+        assert_eq!(r.channels[0].manufacturer.as_deref(), Some("Sennheiser"));
+        assert_eq!(r.channels[1].manufacturer, None);
+        assert_eq!(r.channels[1].model, None);
     }
 
     #[test]
