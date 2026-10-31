@@ -37,24 +37,44 @@ dependencies = [
 
 [[package]]
 name = "apk-worker-wireless-wwb"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "apk-plugin-runner",
  "apkaudio-contracts",
+ "apkaudio-wireless-kernel",
+ "apkaudio-wireless-wwb",
  "base64",
- "rumqttc",
- "serde",
  "serde_json",
  "zip",
 ]
 
 [[package]]
 name = "apkaudio-contracts"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "regress",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "apkaudio-wireless-kernel"
+version = "0.1.0"
+dependencies = [
+ "apk-plugin-runner",
+ "base64",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "apkaudio-wireless-wwb"
+version = "0.1.0"
+dependencies = [
+ "apkaudio-wireless-kernel",
+ "serde",
+ "serde_json",
+ "zip",
 ]
 
 [[package]]

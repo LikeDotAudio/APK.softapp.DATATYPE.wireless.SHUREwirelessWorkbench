@@ -269,7 +269,7 @@ fn parse_wwb_xml_content(content: &str, channels: &mut Vec<WwbChannel>) -> usize
 
     let finish = |dev: &DeviceFields, list: Vec<Pending>, channels: &mut Vec<WwbChannel>, skipped: &mut usize| {
         for ch in list {
-            match ch.freq_khz.map(|k| k / 1000.0).filter(|m| *m > 100.0 && *m < 3000.0) {
+            match ch.freq_khz.map(|k| k / 1000.0).and_then(apkaudio_wireless_kernel::usable_mhz) {
                 Some(frequency_mhz) => channels.push(WwbChannel {
                     device_name: dev.device_name.clone(),
                     manufacturer: dev.manufacturer.clone(),
@@ -364,10 +364,9 @@ fn parse_wwb_xml_content(content: &str, channels: &mut Vec<WwbChannel>) -> usize
     skipped
 }
 
-/// "success" only when the report yielded channels; a parse that found none is
-/// "empty", never a success the panel would draw as an imported, blank table.
+/// "success" only when the report yielded channels — the kernel's one rule.
 fn status_for(channels: usize) -> String {
-    if channels > 0 { "success" } else { "empty" }.to_string()
+    apkaudio_wireless_kernel::import_status(channels)
 }
 
 #[cfg(test)]
@@ -375,7 +374,7 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    const SHOW: &str = include_str!("test_data/venue.shw");
+    const SHOW: &str = include_str!("../../../test_data/venue.shw");
 
     fn zipped(name: &str, body: &str) -> Vec<u8> {
         let mut buf = std::io::Cursor::new(Vec::new());

@@ -19,15 +19,15 @@ The parser is source compiled by somebody else; `SRC/` is the worker crate that 
 
 | File | What it is | Built / loaded by |
 | :-- | :-- | :-- |
-| `wwb_importer.rs` | The parser (no side effect; it does not publish) | `#[path]` module `wwb_importer` of the `apkaudio-data-migration` crate (`Softapps/MANAGEMENT_AND_UTILITIES/MANAGEMENT.DataMigration/mod.rs`), which `oaRustCore` re-exports as `data_migration` |
-| `test_wwb_importer.rs` | A standalone runner over the fixture | `[[bin]] test_wwb_importer` in that crate's `Cargo.toml` |
+| `SRC/importer/` | The parser crate `apkaudio-wireless-wwb` (pure; it publishes nothing) and `tests/fixtures.rs` | linked by the worker by path, and by MANAGEMENT.DataMigration by git rev (re-exported as `wwb_importer`; `oaRustCore` re-exports that crate as `data_migration`) |
+| `SRC/check.sh` | Every check here in one command | `cargo test --workspace --locked` in `SRC/`, plus pytest for the Python edge |
 | `IMPORT:file:SHOW/Entry.py` | The Python edge: hands a show file to `oaRustCore.showfile_unpacker` | loaded by file path; its `STATUS` is asserted by `NODE.BareMetal/SRC/Core/TEST:runner:PYTHON/test_handler_status.py` |
 | `test_data/venue.shw` | A real WWB 7.4 show file (plain XML, 100 devices, 186 channels) | the runner |
 | `display.json` | Launcher manifest (category `DATATYPE`) | the OS app tree (`OS/system/project-apps.json`) |
-| `SRC/` | The worker crate `apk-worker-wireless-wwb`: `wwb_importer.rs` (by `#[path]`) behind a job loop on `apk-plugin-runner`, with its `config.ini` (section `[wireless_wwb]`) | `cargo test --manifest-path SRC/Cargo.toml`; the image `worker-wireless-wwb:local` |
+| `SRC/` | The worker crate `apk-worker-wireless-wwb`: the parser crate `importer/` behind the runner's job loop (`apk_plugin_runner::jobs::JobWorker`) and the wireless kernel's job envelope, with its `config.ini` (section `[wireless_wwb]`) | `bash SRC/check.sh`; the image `worker-wireless-wwb:local` |
 | `Docker/` | The worker stack: container `Worker-WIRELESS_WWB`, project `workers`, no port | included by `PODS/POD.workers/Docker/docker-compose.yml` |
 
-### What the parser does (`wwb_importer.rs`)
+### What the parser does (`SRC/importer/src/lib.rs`)
 
 - `parse_wwb_bytes(bytes, name)` is the door for anything that may be a zip: bytes starting with the zip magic `PK\x03\x04` are unpacked and every member parsed; anything else is read as XML text. A zip that will not open is an error, not an empty show. `parse_wwb_file(path)` reads the file and calls it; `parse_wwb_str(text, name)` parses XML text already in hand. The `classify_wwb_bytes` / `classify_wwb_str` halves do the same without publishing (and are what the unit tests call).
 - The XML is read **by its markup** (a small scanner in `wwb_importer.rs`: tags, CDATA, entities), so a minified show reads like an indented one: a `<device>`'s own children give `manufacturer`, `model`, `device_name`, `band` and `zone`; each `<channel number="n">` gives `channel_name` and `frequency` in kHz.
@@ -42,14 +42,14 @@ The parser is source compiled by somebody else; `SRC/` is the worker crate that 
 The same parser answers jobs on the bus (LOOSE-workers-convert-rest). A client subscribes to
 `APK.audio/System/Protocols/wireless_wwb/incoming/result`, then publishes
 `{"job_id": "<yours>", "filename": "venue.shw", ...}` to `APK.audio/System/Protocols/wireless_wwb/outgoing/job`
-with the file as "content_b64" (the file's bytes; a zipped show does not survive as text — plain XML may come as "text"). The answer carries the same `job_id`, `ok`, and the parse result of
+with the file as "content_b64" (the file's bytes; a zipped show does not survive as text — plain XML may come as "text"). The answer carries `schema: 1`, the same `job_id`, `ok`, and the parse result of
 `classify_wwb_bytes` under `result`; a malformed job or one over `max_job_bytes` (16 MiB, `SRC/config.ini`) comes
 back `ok: false` with an `error`. Nothing is retained and the worker opens no port. Measured
 2026-10-30: the fixture `test_data/venue.shw` sent as a job came back `ok: true` with 186 channels.
 
 ```bash
 docker compose -f PODS/POD.workers/Docker/docker-compose.yml up -d --build wireless-wwb
-cargo test --manifest-path SRC/Cargo.toml        # handle_job on the fixture, the self test
+bash SRC/check.sh                                # handle_job on the fixture, the self test, the shape test
 ```
 
 ## 🚀 Usage & Integration
@@ -57,19 +57,19 @@ cargo test --manifest-path SRC/Cargo.toml        # handle_job on the fixture, th
 * **Who calls the parser**: the `wireless_wwb` worker, on each job the frame posts: `content_b64` (or `text`) becomes **bytes** for `classify_wwb_bytes`, so a zipped `.shw` is unzipped rather than lossy-decoded to text. (The orchestrator's DataMigration inbox that used to call it is retired: LOOSE-datamigration-frames-to-workers.)
 * **Remote Repository**: https://github.com/LikeDotAudio/APK.softapp.DATATYPE.wireless.SHUREwirelessWorkbench
 
-### Build and check
+### Build and test
 
 ```bash
-cd PODS/POD.THIN/Softapps/MANAGEMENT_AND_UTILITIES/MANAGEMENT.DataMigration
-cargo test --lib wwb               # plain, zipped, broken-zip, minified .shw; nothing invented; publishes nothing
-cargo check --bins --lib          # compiles this parser and test_wwb_importer
-cd PODS/POD.THICK/NODE.BareMetal/SRC/Core
-PYTHONPATH=. python3 TEST:runner:PYTHON/test_handler_status.py   # Entry.py's STATUS — 6 tests
+bash SRC/check.sh                       # everything below, --locked
+cd SRC && cargo test --workspace        # worker (9), parser crate (7 + fixture 1)
 ```
 
-`cargo run --bin test_wwb_importer` parses the fixture and prints the first 15 channels; it publishes nothing. It reads the fixture from `../../DATATYPE/DATATYPE.wireless.SHUREwirelessWorkbench/test_data/venue.shw` (until 2026-10-30 it looked under the DataMigration crate and exited 1).
-
-`Entry.py`'s `run_tests()` unpacks a one-member zip through the Rust unpacker and checks the answer; it returns `False` when the unpacker is missing or wrong (it used to return `True` unconditionally). `start()`/`stop()` are declared no-ops — the importer holds nothing between calls.
+The parser is the crate `apkaudio-wireless-wwb` (`SRC/importer/`). The worker links it by path;
+MANAGEMENT.DataMigration (and through it oaRustCore) links it by git rev — nobody compiles the
+file by `#[path]` any more. `SRC/importer/tests/fixtures.rs` parses `test_data/venue.shw` from
+its path (186 channels); it was the `test_wwb_importer` `[[bin]]` DataMigration built from this
+repository's file until the 2026-10-30 audit. The 100–3000 MHz guard and the status word are the
+wireless kernel's (`apkaudio-wireless-kernel`, DATATYPE.wireless.CSV/SRC/kernel, by git rev).
 
 ---
 

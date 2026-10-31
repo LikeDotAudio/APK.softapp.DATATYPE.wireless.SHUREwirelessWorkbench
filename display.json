@@ -1,8 +1,16 @@
 {
   "name": "Datatype Wireless Shurewirelessworkbench",
   "category": "DATATYPE",
-  "icon": "\ud83d\udcd1",
-  "description": "Data Format Importers & Parsers component for APK.audio ecosystem.",
-  "entry": "wwb_importer.rs",
-  "tech": "rust"
+  "icon": "📑",
+  "description": "Shure Wireless Workbench show (.shw, plain XML or zipped) importer: reads devices and channels into records and answers each job posted to APK.audio/System/Protocols/wireless_wwb/outgoing/job on .../wireless_wwb/incoming/result.",
+  "entry": "SRC/importer/src/lib.rs",
+  "tech": "rust",
+  "requires": {
+    "plugins": [
+      "wireless_wwb"
+    ],
+    "services": [
+      "broker"
+    ]
+  }
 }

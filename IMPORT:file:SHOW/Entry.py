@@ -19,9 +19,14 @@
 # `XXXoa_showfile_unpacker_rs` and therefore outside the crate's module tree, so
 # every call raised while `status()` reported "Running with Rust Engine".
 
-from importer_logging import matrix_log
+# MARKER_HEADERS, the lifecycle and the logging call come from
+# `apk_wireless_import` (DATATYPE.wireless.CSV/SRC/python, package
+# `apk-wireless-import`, pinned in requirements.txt beside this file) — one copy
+# for the IAS, SoundBase-PDF and Wireless Workbench edges. This edge no longer
+# imports NODE.BareMetal's `importer_logging`, so it needs no other repository on
+# PYTHONPATH.
 
-MARKER_HEADERS = ["ZONE", "GROUP", "DEVICE", "NAME", "FREQ_MHZ", "PEAK"]
+from apk_wireless_import import MARKER_HEADERS, Lifecycle, log
 
 try:
     from oaRustCore.showfile_unpacker import unpack_showfile
@@ -33,10 +38,9 @@ except ImportError:
 STATUS = "live" if unpack_showfile else "unavailable"
 
 
-# Inline comment: Logic for convert_shure_wwb_shw_to_markers
 def convert_shure_wwb_shw_to_markers(file_path):
     if unpack_showfile:
-        matrix_log("ui", "importer", "convert_shure_wwb_shw_to_markers", "🚀 Using HIGH-PERFORMANCE RUST Showfile unpacker.", "DEBUG")
+        log("convert_shure_wwb_shw_to_markers", "🚀 Using HIGH-PERFORMANCE RUST Showfile unpacker.")
         return MARKER_HEADERS, unpack_showfile(str(file_path))
     raise RuntimeError("Rust Showfile parser required")
 
@@ -45,30 +49,8 @@ Marker_convert_WWB_SHW_File_report_to_csv = convert_shure_wwb_shw_to_markers
 Marker_convert_wwb_zip_report_to_csv = convert_shure_wwb_shw_to_markers
 
 
-# Lifecycle. The importer holds no thread, socket or file between calls, so there is
-# nothing to start or stop: these exist because the importer interface names them,
-# and they say so rather than pretend to do something.
-def start():
-    """No-op by design: the importer is stateless between calls."""
-    return None
-
-
-def stop():
-    """No-op by design: the importer is stateless between calls."""
-    return None
-
-
-def status():
-    return STATUS
-
-
-def run_tests():
-    """Unpack a one-member archive through the Rust unpacker and check what comes back.
-
-    False when the unpacker is unavailable or answers wrongly — never True for
-    having run nothing. (It used to return True unconditionally.)"""
-    if not unpack_showfile:
-        return False
+def _self_test():
+    """Unpack a one-member archive through the Rust unpacker and check what comes back."""
     import json
     import os
     import tempfile
@@ -78,13 +60,16 @@ def run_tests():
         path = os.path.join(tmp, "self_test.shw")
         with zipfile.ZipFile(path, "w") as zf:
             zf.writestr("show.json", json.dumps(member))
-        try:
-            got = unpack_showfile(path)
-        except Exception as e:
-            matrix_log("ui", "importer", "run_tests", f"❌ Showfile unpacker self-test raised: {e}", "ERROR")
-            return False
+        got = unpack_showfile(path)
     # the unpacker returns each member's JSON as a string (see the header)
     return isinstance(got, dict) and json.loads(got.get("show.json", "null")) == member
+
+
+# The importer interface's lifecycle, from the shared module: start/stop are
+# no-ops (stateless), run_tests() is False unless STATUS is "live" and the
+# unpack above answers right — never True for having run nothing.
+_life = Lifecycle(STATUS, self_test=_self_test)
+start, stop, status, run_tests = _life.start, _life.stop, _life.status, _life.run_tests
 
 
 # csv_to_json_and_publish() used to sit here: an empty function exported under a name

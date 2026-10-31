@@ -25,25 +25,22 @@ parse_wwb_xml_content: xml_events (tags, CDATA, entities) + an element stack —
 
 | Path | What |
 |---|---|
-| `wwb_importer.rs` | parser and unit tests (it does not publish); module `wwb_importer` of `MANAGEMENT.DataMigration` |
-| `test_wwb_importer.rs` | `[[bin]] test_wwb_importer` — parses `test_data/venue.shw` and prints the first 15 channels |
+| `SRC/importer/` | the parser crate `apkaudio-wireless-wwb` and its unit tests (no publisher), `tests/fixtures.rs` over `test_data/venue.shw`; MANAGEMENT.DataMigration depends on it by git rev |
+| `SRC/check.sh` | the one local check: `cargo test --workspace --locked` (+ pytest for the Python edge) |
 | `test_data/venue.shw` | a real WWB 7.4 show (plain XML) |
 | `IMPORT:file:SHOW/Entry.py` | Python edge over `oaRustCore.showfile_unpacker.unpack_showfile` (returns each `.json` member as a string) |
 
 ## Testing
 
 ```bash
-cd PODS/POD.THIN/Softapps/MANAGEMENT_AND_UTILITIES/MANAGEMENT.DataMigration
-cargo test --lib wwb        # plain, zipped, broken zip, minified, nothing invented
-cd PODS/POD.THICK/NODE.BareMetal/SRC/Core
-PYTHONPATH=. python3 -m pytest -q "TEST:runner:PYTHON/test_handler_status.py"
+bash PODS/POD.THIN/Softapps/DATATYPE/DATATYPE.wireless.SHUREwirelessWorkbench/SRC/check.sh
 ```
 
 ## As a worker
 
 `SRC/src/lib.rs` `handle_job` decodes a job (`text` or `content_b64`), refuses one over
-`max_job_bytes` (16 MiB), runs `classify_wwb_bytes` and returns `{job_id, tool, ok, result, error, elapsed_ms}`
-— always, so a caller waiting on a `job_id` is never left waiting. `run_job_agent` feeds it from
+`max_job_bytes` (16 MiB), runs `classify_wwb_bytes` and returns `{schema, job_id, tool, ok, result, error, elapsed_ms}` (the wireless kernel's `job` envelope)
+— always, so a caller waiting on a `job_id` is never left waiting. `run_job_agent` (the runner's `JobWorker`: session, ConnAck resubscribe, lane thread, busy answer) feeds it from
 `APK.audio/System/Protocols/wireless_wwb/outgoing/job` and answers on `…/incoming/result`, neither
 retained. `apk-plugin-runner` adds the retained `incoming/api` description, the config, the will and
 the self test (`SRC/src/self_test.rs`: a probe file compiled into the binary runs through
