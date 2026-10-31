@@ -4,15 +4,15 @@
 
 ## Using it
 
-In the Data Migration tab, the *Wireless Workbench* frame (`Gui_Frames/3_Data_Migration/3_Wireless_Workbench/`) publishes the chosen `.shw` on `APK.audio/System/DataMigration/WWB/FilePath` — a disk path, `raw_content` text, or a base64 `raw_blob` (plain or zipped) — and draws its table from `…/WWB/ImportedData`.
+In the Data Migration tab, the *Wireless Workbench* frame (`Gui_Frames/3_Data_Migration/3_Wireless_Workbench/`) reads the chosen `.shw` as bytes in the browser and posts it as a job, `{job_id, filename, content_b64}` (plain or zipped), not retained, to `APK.audio/System/Protocols/wireless_wwb/outgoing/job`; it draws its table from the worker's answer on `…/wireless_wwb/incoming/result`. No host path is ever sent.
 
 ## How it works
 
 ```text
-…/WWB/FilePath ─▶ NODE.BareMetal data-migration daemon
-                    raw_blob    → parse_wwb_bytes(bytes)  ┐
-                    raw_content → parse_wwb_str(text)     ├─▶ classify_* (no side effect) ─▶ publish retained
-                    a path      → parse_wwb_file(path)    ┘      → APK.audio/System/DataMigration/WWB/ImportedData
+…/wireless_wwb/outgoing/job ─▶ Worker-WIRELESS_WWB (SRC/src/lib.rs handle_job)
+                    content_b64 → bytes ┐
+                    text        → bytes ┴─▶ classify_wwb_bytes (no side effect) ─▶ {job_id, ok, result, error},
+                                               not retained → …/wireless_wwb/incoming/result
 classify_wwb_bytes: starts with PK\x03\x04 → unzip, parse every member as XML; else → text
 parse_wwb_xml_content: xml_events (tags, CDATA, entities) + an element stack — line breaks do not matter
    <device> … </device>      its own children: manufacturer, model (null when absent), device_name, band, zone

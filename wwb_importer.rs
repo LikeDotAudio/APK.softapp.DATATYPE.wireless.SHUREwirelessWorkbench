@@ -1,8 +1,8 @@
 // Part of the APK.audio project — http://APK.audio — made by Anthony Kuzub
 // MIT Licence. Free, for everyone, for ever. Full text in LICENSE at the root.
 //! Standalone Shure Wireless Workbench (.shw) Importer written in Rust. It does not
-//! publish: the data-migration daemon publishes the result on the broker it was
-//! started with (LOOSE-datatype-datatype-wireless).
+//! publish: the wireless_wwb worker (`SRC/src/lib.rs`) answers each job with the
+//! result (LOOSE-datatype-datatype-wireless, LOOSE-datamigration-frames-to-workers).
 
 use serde::{Deserialize, Serialize};
 use std::io::Read;
@@ -61,8 +61,8 @@ pub fn parse_wwb_bytes(bytes: &[u8], source_name: &str) -> Result<WwbParseResult
     classify_wwb_bytes(bytes, source_name)
 }
 
-/// Parses .shw XML text. No side effect. Called by the data-migration daemon for a
-/// `raw_content` payload; the standalone runner, which compiles this file too, does not.
+/// Parses .shw XML text. No side effect. Nothing in the running system calls it now
+/// (the worker hands every job to `classify_wwb_bytes`); kept for library callers.
 #[allow(dead_code)]
 pub fn parse_wwb_str(content: &str, source_name: &str) -> Result<WwbParseResult, String> {
     Ok(classify_wwb_str(content, source_name))

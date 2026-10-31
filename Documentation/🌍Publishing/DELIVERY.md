@@ -2,7 +2,7 @@
 
 ← [Wiki home](../README.md)
 
-The importer ships compiled into the orchestrator, and as a worker image of its own:
+The importer ships as a worker image of its own — the one the Data Migration frame posts its job to — and is still linked into the orchestrator through `oaRustCore`, where nothing calls it since the DataMigration inbox was retired (LOOSE-datamigration-frames-to-workers):
 
 | What | Built by | Lands |
 |---|---|---|
