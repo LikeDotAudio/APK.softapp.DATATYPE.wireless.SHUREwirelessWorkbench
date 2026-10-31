@@ -4,7 +4,7 @@ Audited against the APK.audio multi-repo architecture standard: coupling, bounda
 ← [Audits](INDEX.md) · Improvements: [🛣Roadmap/IMPROVEMENTS.md](../%F0%9F%9B%A3Roadmap/IMPROVEMENTS.md)
 
 ## Bounded context
-The Shure Wireless Workbench `.shw` show-file dialect: a Rust parser (`wwb_importer.rs`) and the `Worker-WIRELESS_WWB` container that answers jobs on the bus with parsed channels, plus a legacy Python importer edge (`IMPORT:file:SHOW/Entry.py`). ~920 lines total; Rust 2024 + rumqttc + zip.
+The Shure Wireless Workbench `.shw` show-file dialect: a Rust parser (`wwb_importer.rs`) and the `Worker-WIRELESS_WWB` container that answers jobs on the bus with parsed channels, plus a legacy Python importer edge (`IMPORT.file.SHOW/Entry.py`). ~920 lines total; Rust 2024 + rumqttc + zip.
 
 Sampled: every tracked file (small repo) — `Docker/`, `SRC/Cargo.toml`, `SRC/config.ini`, `SRC/src/lib.rs`, `self_test.rs`, the bin, `wwb_importer.rs`, `test_wwb_importer.rs`, `Entry.py`, `display.json`.
 
@@ -15,7 +15,7 @@ Sampled: every tracked file (small repo) — `Docker/`, `SRC/Cargo.toml`, `SRC/c
 | APK.plugin.SDK (`apk-plugin-runner`, `apkaudio-contracts`) | Cargo `tag = "sdk-v0.7"`, pinned in Cargo.lock; job loop `apk_plugin_runner::jobs::JobWorker` | Conformist, by version |
 | DATATYPE.wireless.CSV `SRC/kernel` (`apkaudio-wireless-kernel`) | Cargo git rev (band rule, status word, job envelope) | Shared kernel, one-way |
 | MANAGEMENT.DataMigration | depends on `SRC/importer` (`apkaudio-wireless-wwb`) by git rev | Supplier (crate) |
-| `apk_wireless_import` (DATATYPE.wireless.CSV/SRC/python) | `IMPORT:file:SHOW/Entry.py` imports it; pinned by rev in `IMPORT:file:SHOW/requirements.txt` | Supplier (package) |
+| `apk_wireless_import` (DATATYPE.wireless.CSV/SRC/python) | `IMPORT.file.SHOW/Entry.py` imports it; pinned by rev in `IMPORT.file.SHOW/requirements.txt` | Supplier (package) |
 | oaRustCore (optional native wheel) | the Python edge's engine; absent → `STATUS = "unavailable"` | Customer of a native module |
 | POD.workers aggregator | `include:`s `Docker/docker-compose.yml`; project `workers` | Pod aggregator (house pattern) |
 

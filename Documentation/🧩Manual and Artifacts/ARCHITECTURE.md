@@ -28,7 +28,7 @@ parse_wwb_xml_content: xml_events (tags, CDATA, entities) + an element stack —
 | `SRC/importer/` | the parser crate `apkaudio-wireless-wwb` and its unit tests (no publisher), `tests/fixtures.rs` over `test_data/venue.shw`; MANAGEMENT.DataMigration depends on it by git rev |
 | `SRC/check.sh` | the one local check: `cargo test --workspace --locked` (+ pytest for the Python edge) |
 | `test_data/venue.shw` | a real WWB 7.4 show (plain XML) |
-| `IMPORT:file:SHOW/Entry.py` | Python edge over `oaRustCore.showfile_unpacker.unpack_showfile` (returns each `.json` member as a string) |
+| `IMPORT.file.SHOW/Entry.py` | Python edge over `oaRustCore.showfile_unpacker.unpack_showfile` (returns each `.json` member as a string) |
 
 ## Testing
 

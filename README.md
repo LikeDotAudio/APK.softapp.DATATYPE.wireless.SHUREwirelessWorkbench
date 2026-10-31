@@ -21,7 +21,7 @@ The parser is source compiled by somebody else; `SRC/` is the worker crate that 
 | :-- | :-- | :-- |
 | `SRC/importer/` | The parser crate `apkaudio-wireless-wwb` (pure; it publishes nothing) and `tests/fixtures.rs` | linked by the worker by path, and by MANAGEMENT.DataMigration by git rev (re-exported as `wwb_importer`; `oaRustCore` re-exports that crate as `data_migration`) |
 | `SRC/check.sh` | Every check here in one command | `cargo test --workspace --locked` in `SRC/`, plus pytest for the Python edge |
-| `IMPORT:file:SHOW/Entry.py` | The Python edge: hands a show file to `oaRustCore.showfile_unpacker` | loaded by file path; its `STATUS` is asserted by `NODE.BareMetal/SRC/Core/TEST:runner:PYTHON/test_handler_status.py` |
+| `IMPORT.file.SHOW/Entry.py` | The Python edge: hands a show file to `oaRustCore.showfile_unpacker` | loaded by file path; its `STATUS` is asserted by `NODE.BareMetal/SRC/Core/TEST.runner.PYTHON/test_handler_status.py` |
 | `test_data/venue.shw` | A real WWB 7.4 show file (plain XML, 100 devices, 186 channels) | the runner |
 | `display.json` | Launcher manifest (category `DATATYPE`) | the OS app tree (`OS/system/project-apps.json`) |
 | `SRC/` | The worker crate `apk-worker-wireless-wwb`: the parser crate `importer/` behind the runner's job loop (`apk_plugin_runner::jobs::JobWorker`) and the wireless kernel's job envelope, with its `config.ini` (section `[wireless_wwb]`) | `bash SRC/check.sh`; the image `worker-wireless-wwb:local` |
@@ -76,7 +76,7 @@ wireless kernel's (`apkaudio-wireless-kernel`, DATATYPE.wireless.CSV/SRC/kernel,
 ## 🧭 Philosophy
 
 - **One record out, whatever came in.** Four foreign formats feed the Data Migration tab; each importer emits the fields its GUI frame declares as headers (the rule in the `MANAGEMENT.DataMigration/mod.rs` header; the `check.sh datamigration` gate it names is not in the tree today). Here: `WwbChannel` in `wwb_importer.rs` against `Wireless_Workbench_Importer.json`.
-- **A stub says so in a constant.** `IMPORT:file:SHOW/Entry.py` sets `STATUS = "live"` only when `oaRustCore.showfile_unpacker` imports, `"unavailable"` otherwise, and a test asserts it. When the Rust unpacker is missing it raises `RuntimeError("Rust Showfile parser required")` instead of unpacking in Python — one implementation, no quiet fallback.
+- **A stub says so in a constant.** `IMPORT.file.SHOW/Entry.py` sets `STATUS = "live"` only when `oaRustCore.showfile_unpacker` imports, `"unavailable"` otherwise, and a test asserts it. When the Rust unpacker is missing it raises `RuntimeError("Rust Showfile parser required")` instead of unpacking in Python — one implementation, no quiet fallback.
 - **Publish and let go.** The daemon publishes the parse retained and returns; the bus holds the latest import for any tab that opens later. There is no store of imports in this repo.
 
 ---
