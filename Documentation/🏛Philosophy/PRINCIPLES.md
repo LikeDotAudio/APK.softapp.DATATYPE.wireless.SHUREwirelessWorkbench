@@ -10,7 +10,6 @@ The rules the Wireless Workbench importer keeps, each with the code that keeps i
 | **A broken input is an error, not an empty show.** | `classify_wwb_bytes` returns `Err` for an unreadable zip; test `a_broken_zip_is_an_error_not_an_empty_show` (line 292) | A plain-XML file that holds no recognisable `<channel>` is still "success" with 0 channels |
 | **Parsing has no side effect; publishing is a separate step.** | `classify_wwb_*` (lines 71, 91) vs `parse_wwb_*` (lines 45–62) | — |
 | **One record out, whatever came in.** `WwbChannel` carries the eight headers the GUI frame declares. | `WwbChannel`; `Wireless_Workbench_Importer.json` | — |
-| **Topics come from the contract.** | `wwb_mqtt_topic()` (line 36) | — |
 | **Do not invent a value.** | `WwbChannel.manufacturer`, `.model` and `.channel_number` are `Option`s: what the show leaves out is `null`, not `Shure` / `Generic` / the previous number; a channel outside a `<device>` inherits nothing; test `what_the_show_leaves_out_stays_out` (line 439) | — |
 | **A stub says so in a constant; a self-test tests.** | `IMPORT:file:SHOW/Entry.py`: `STATUS` (line 33); `run_tests()` (line 65) unpacks a one-member zip and checks the answer; `start`/`stop` are declared stateless no-ops | — |
 | **Read the markup, not the line breaks.** | `xml_events` scans tags, CDATA and entities (no new dependency) and `parse_wwb_xml_content` (line 267) walks an element stack; test `a_minified_show_reads_the_same_as_the_indented_one` (line 430) | Not a validating parser: malformed XML is read as far as it goes |

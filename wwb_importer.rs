@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::Path;
 use zip::ZipArchive;
-use apkaudio_contracts::topics;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WwbChannel {
@@ -30,19 +29,10 @@ pub struct WwbParseResult {
     pub status: String,
     pub source_format: String,
     pub file_path: String,
-    pub mqtt_topic: String,
     pub total_channels: usize,
     /// `<channel>` blocks the show carried with no usable frequency.
     pub skipped_rows: usize,
     pub channels: Vec<WwbChannel>,
-}
-
-/// `APK.audio/System/DataMigration/WWB/ImportedData`, built from the contract
-/// rather than typed out — see `contracts/rust/src/topics.rs`, whose own header
-/// names the DataMigration importers as the literals it exists to replace.
-pub fn wwb_mqtt_topic() -> String {
-    topics::data_migration("WWB", "ImportedData")
-        .expect("WWB/ImportedData are literal segments the contract accepts")
 }
 
 /// The four bytes every zip archive starts with (a local file header).
@@ -104,7 +94,6 @@ fn wwb_result(channels: Vec<WwbChannel>, skipped_rows: usize, source_name: &str)
         skipped_rows,
         source_format: "Shure_WWB_SHW".to_string(),
         file_path: source_name.to_string(),
-        mqtt_topic: wwb_mqtt_topic(),
         total_channels: channels.len(),
         channels,
     }
