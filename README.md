@@ -52,6 +52,25 @@ docker compose -f PODS/POD.workers/Docker/docker-compose.yml up -d --build wirel
 bash SRC/check.sh                                # handle_job on the fixture, the self test, the shape test
 ```
 
+### Its carriers on the bus (ROAD-3519)
+
+Every carrier an imported file names is also said as a `Device/` row, with PLUGIN.WIFI's leaf
+names, so EDITORS.WirelessBuddy's Discovered panel lists it beside the Wi-Fi radios:
+
+```text
+APK.audio/System/Protocols/wireless_wwb/Device/<id>/{name, device_class, frequency_mhz, channel, band,
+    model, manufacturer, device, zone, group, source_file}     unkept, again every restate_s (30 s)
+APK.audio/Discovery/wireless_wwb/<deviceId>                           presence, the runner's (presence::seen)
+```
+
+`device_class` is `Wireless Transmitter` (the transmitter on that frequency); a field the file
+does not carry is `-`. Identity is never an address: one `<channel>` of a `<device>` is one carrier. A show carries no serial (its `<mac_address>` is an address, and empty on an offline unit), so the id is formed from the device's inventory `<id>` — Workbench's own GUID for the unit — and the channel number; a device with no `<id>` falls back to `source file | device name | model | band | channel number | channel name`. `channel` is the channel number, `band`, `model` and `manufacturer` the device's. That text, numbered `#n` where it
+repeats, is hashed — `deviceId = wireless_wwb:plan:<fnv1a64>`, `<id>` = the same as one topic segment
+(`wireless_wwb_plan_<hex>`) — so the same file imported again lands on the same ids. A file's carriers
+last until the same file name is imported again (dropped carriers are said gone at once) or the
+worker restarts; presence then says them offline after `presence_inactive_after_s` (90 s). Code:
+`SRC/src/carriers.rs`, `carriers_of` in `SRC/src/lib.rs`. Measured 2026-11-04 on the bench: `test_data/venue.shw` sent as a job put 186 carriers under `wireless_wwb/Device/` (186 `frequency_mhz` leaves) and 186 online presence documents.
+
 ## 🚀 Usage & Integration
 * **Web Portal Entry**: Data Migration → *Wireless Workbench* (GUI frame `Gui_Frames/3_Data_Migration/3_Wireless_Workbench/`). The frame posts the chosen file's bytes, base64, as a job to `APK.audio/System/Protocols/wireless_wwb/outgoing/job` and draws the table from `.../wireless_wwb/incoming/result`.
 * **Who calls the parser**: the `wireless_wwb` worker, on each job the frame posts: `content_b64` (or `text`) becomes **bytes** for `classify_wwb_bytes`, so a zipped `.shw` is unzipped rather than lossy-decoded to text. (The orchestrator's DataMigration inbox that used to call it is retired: LOOSE-datamigration-frames-to-workers.)

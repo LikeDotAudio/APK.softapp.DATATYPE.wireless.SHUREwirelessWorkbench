@@ -21,6 +21,7 @@
 //! wireless workers.
 
 pub use apkaudio_wireless_wwb as wwb_importer;
+pub mod carriers;
 pub mod self_test;
 
 use apkaudio_wireless_kernel::job;
@@ -51,6 +52,54 @@ pub fn handle_job(payload: &[u8], max_bytes: usize) -> Value {
     }
 }
 
+/// The carriers a Workbench show names (ROAD-3519). One `<channel>` of a
+/// `<device>` is one carrier. A show carries no serial (its `<mac_address>`
+/// is an address, and empty on offline units), so the id is formed
+/// (src/carriers.rs) from the device's inventory `<id>` — Workbench's own GUID
+/// for the unit — and the channel number; a device with no `<id>` falls back
+/// to `source file | device name | model | band | channel number | channel
+/// name`. Either way `#n` numbers repeats in show order.
+pub fn carriers_of(answer: &Value) -> Option<(String, Vec<carriers::Carrier>)> {
+    if answer["ok"] != true {
+        return None;
+    }
+    let result = &answer["result"];
+    let file = text(result, "file_path").to_string();
+    let list = result["channels"].as_array()?.iter().filter_map(|r| {
+        let number = r["channel_number"].as_u64().map(|n| n.to_string()).unwrap_or_default();
+        let unit = match r["device_uid"].as_str().filter(|u| !u.trim().is_empty()) {
+            Some(uid) => carriers::Carrier::unit_of(&[uid, &number]),
+            None => carriers::Carrier::unit_of(&[&file, text(r, "device_name"), text(r, "model"), text(r, "band"), &number, text(r, "channel_name")]),
+        };
+        let name = [text(r, "channel_name"), text(r, "device_name")].into_iter().find(|s| !s.trim().is_empty()).unwrap_or("");
+        Some(carriers::Carrier {
+            unit,
+            name: name.into(),
+            frequency_mhz: r["frequency_mhz"].as_f64()?,
+            channel: number,
+            band: text(r, "band").into(),
+            model: text(r, "model").into(),
+            manufacturer: text(r, "manufacturer").into(),
+            device: text(r, "device_name").into(),
+            zone: text(r, "zone").into(),
+            group: String::new(),
+            source_file: file.clone(),
+        })
+    });
+    Some((file.clone(), carriers::number_units(list.collect())))
+}
+
+/// A text field of a result row; empty when absent.
+fn text<'a>(row: &'a Value, key: &str) -> &'a str {
+    row[key].as_str().unwrap_or("")
+}
+
+/// The carriers of every imported file, restated as a Device/ tree and
+/// sighted for presence (src/carriers.rs). Blocking, beside the job loop.
+pub fn run_device_agent(host: &str, port: u16) {
+    carriers::run(MODULE, host, port, carriers::restate_s(CONFIG_INI, MODULE, 30));
+}
+
 /// The job loop: the runner's. Blocking; the runner starts it on its own
 /// thread and exits the process if it ever returns, so Docker restarts it.
 pub fn run_job_agent(host: &str, port: u16) {
@@ -58,7 +107,12 @@ pub fn run_job_agent(host: &str, port: u16) {
     apk_plugin_runner::jobs::JobWorker::new(MODULE, TOOL, move |payload: &[u8]| {
         // One job taken off outgoing/job and run: this worker's packet (ROAD-3472).
         apk_plugin_runner::loopback::packet_received();
-        handle_job(payload, max)
+        let answer = handle_job(payload, max);
+        // Its carriers on the bus as a Device/ tree (ROAD-3519).
+        if let Some((file, list)) = carriers_of(&answer) {
+            carriers::imported(&file, list);
+        }
+        answer
     })
         // A job is a file, and base64 grows it by a third.
         .max_packet(max / 3 * 4 + 64 * 1024)
@@ -184,7 +238,39 @@ mod tests {
             k
         };
         assert_eq!(keys(&out["result"]), ["channels", "file_path", "skipped_rows", "source_format", "status", "total_channels"]);
-        assert_eq!(keys(&out["result"]["channels"][0]), ["band", "channel_name", "channel_number", "device_name", "frequency_mhz", "manufacturer", "model", "zone"]);
+        assert_eq!(keys(&out["result"]["channels"][0]), ["band", "channel_name", "channel_number", "device_name", "device_uid", "frequency_mhz", "manufacturer", "model", "zone"]);
         assert_eq!(job::SCHEMA, 1);
+    }
+    /// ROAD-3519: every carrier of the fixture becomes a Device/ row with
+    /// PLUGIN.WIFI's leaf names, under an id formed from the file, not an address.
+    #[test]
+    fn the_fixture_puts_every_carrier_under_device() {
+        let out = handle_job(&job(json!({"job_id": "d", "filename": "venue.shw", "text": REPORT})), 1 << 24);
+        assert_eq!(out["ok"], true, "{out}");
+        let (file, list) = carriers_of(&out).expect("an ok answer has carriers");
+        assert_eq!(file, "venue.shw");
+        assert_eq!(list.len() as u64, out["result"]["total_channels"].as_u64().unwrap());
+        assert!(!list.is_empty());
+        let ids: std::collections::BTreeSet<String> = list.iter().map(|c| c.device_id(MODULE)).collect();
+        assert_eq!(ids.len(), list.len(), "every carrier its own id");
+        let mut bands = 0;
+        for c in &list {
+            let f = c.fields(MODULE);
+            let get = |leaf: &str| f.iter().find(|(t, _)| t.ends_with(&format!("/{leaf}"))).map(|(_, v)| v.clone()).unwrap();
+            assert!(f[0].0.starts_with("APK.audio/System/Protocols/wireless_wwb/Device/wireless_wwb_plan_"), "{}", f[0].0);
+            assert_eq!(get("device_class"), "Wireless Transmitter");
+            let mhz: f64 = get("frequency_mhz").parse().unwrap();
+            assert!(mhz > 100.0 && mhz < 3000.0, "{mhz}");
+            assert!(!get("channel").is_empty() && !get("name").is_empty());
+            if get("band") != "-" {
+                bands += 1;
+            }
+            assert!(c.device_id(MODULE).starts_with("wireless_wwb:plan:"));
+        }
+        assert!(bands > 0, "the band leaf is said (the file's, else the ITU band)");
+        // The same file again lands on the same ids.
+        let (_, again) = carriers_of(&handle_job(&job(json!({"job_id": "d", "filename": "venue.shw", "text": REPORT})), 1 << 24)).unwrap();
+        assert_eq!(again.iter().map(|c| c.device_id(MODULE)).collect::<Vec<_>>(), list.iter().map(|c| c.device_id(MODULE)).collect::<Vec<_>>());
+        assert!(carriers_of(&handle_job(b"not json", 1 << 24)).is_none(), "a failed job names no carrier");
     }
 }

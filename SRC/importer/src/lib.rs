@@ -11,6 +11,9 @@ use zip::ZipArchive;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WwbChannel {
+    /// The device's inventory `<id>` — Workbench's own identifier for the unit
+    /// in this show (a GUID, not an address); `None` when the show has none.
+    pub device_uid: Option<String>,
     pub device_name: String,
     /// The device's `<manufacturer>`; `None` when the show does not say — never guessed.
     pub manufacturer: Option<String>,
@@ -240,6 +243,7 @@ fn attribute(attrs: &str, key: &str) -> Option<String> {
 /// What the enclosing `<device>` says about itself — only what it says.
 #[derive(Default, Clone)]
 struct DeviceFields {
+    uid: Option<String>,
     manufacturer: Option<String>,
     model: Option<String>,
     device_name: String,
@@ -271,6 +275,7 @@ fn parse_wwb_xml_content(content: &str, channels: &mut Vec<WwbChannel>) -> usize
         for ch in list {
             match ch.freq_khz.map(|k| k / 1000.0).and_then(apkaudio_wireless_kernel::usable_mhz) {
                 Some(frequency_mhz) => channels.push(WwbChannel {
+                    device_uid: dev.uid.clone(),
                     device_name: dev.device_name.clone(),
                     manufacturer: dev.manufacturer.clone(),
                     model: dev.model.clone(),
@@ -336,6 +341,7 @@ fn parse_wwb_xml_content(content: &str, channels: &mut Vec<WwbChannel>) -> usize
                         if let Some((dev, _)) = devices.last_mut() {
                             let present = Some(value.clone()).filter(|v| !v.is_empty());
                             match field {
+                                "id" => dev.uid = present,
                                 "manufacturer" => dev.manufacturer = present,
                                 "model" => dev.model = present,
                                 "device_name" => dev.device_name = value,
@@ -412,6 +418,7 @@ mod tests {
         let first = &r.channels[0];
         assert_eq!((first.manufacturer.as_deref(), first.model.as_deref()), (Some("Shure"), Some("PSM1000")));
         assert_eq!((first.device_name.as_str(), first.band.as_str(), first.channel_number), ("P10T", "G10", Some(1)));
+        assert_eq!(first.device_uid.as_deref(), Some("9E3F2082-8BEF-45FA-BDB8-56E09535F704"), "the inventory <id>, not its dcid=");
     }
 
     #[test]
