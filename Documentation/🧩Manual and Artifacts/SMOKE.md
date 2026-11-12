@@ -4,12 +4,14 @@ Is `DATATYPE.wireless.SHUREwirelessWorkbench` deployed? Written by `.apk.scripts
 
 ← [Wiki home](../README.md)
 
-**✅ PASS** — 1/1 checks, since 2026-10-30 12:51 EDT
+**❌ FAIL** — 2/3 checks, since 2026-11-12 00:16 EST
 
 | Check | Target | Result | Detail |
 |---|---|---|---|
-| pushed | [APK.softapp.DATATYPE.wireless.SHUREwirelessWorkbench](https://github.com/LikeDotAudio/APK.softapp.DATATYPE.wireless.SHUREwirelessWorkbench.git) | ✅ | HEAD is on origin |
+| pushed | [APK.softapp.DATATYPE.wireless.SHUREwirelessWorkbench](https://github.com/LikeDotAudio/APK.softapp.DATATYPE.wireless.SHUREwirelessWorkbench.git) | ❌ | 1 commit(s) not pushed |
+| container | `Worker-WIRELESS_WWB` | ✅ | running, healthy |
+| web | [SRC/importer/src/lib.rs](https://apk.audio/APK%3ASoftapps/DATATYPE/DATATYPE.wireless.SHUREwirelessWorkbench/SRC/importer/src/lib.rs) | ✅ | HTTP 200 |
 
 Re-run: `python3 .apk.scripts/smoke.py PODS/POD.THIN/Softapps/DATATYPE/DATATYPE.wireless.SHUREwirelessWorkbench`
 
-<!-- smoke:sig 28ad285d2a19 since 2026-10-30 12:51 EDT -->
+<!-- smoke:sig 4580b12b5feb since 2026-11-12 00:16 EST -->
