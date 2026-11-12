@@ -43,6 +43,8 @@ Remote: `https://github.com/LikeDotAudio/APK.softapp.DATATYPE.wireless.SHUREwire
 From this repository's own commits (the commit message is the record):
 
 - pin sdk-v2.4 and the providers re-released on it (ROAD-3731: contracts 2.4.0 published) (`92583f6`)
+- wiki: lanes, README and smoke result refreshed (wiki.py + smoke.py) (`68b3385`)
+- docs(smoke): pass — results in the wiki (`61859c0`)
 
 ## Releases
 - **Released `2.0.0`, tag `v2.0.0`** (2026-11-01, ROAD-3452, the owner's V2) — on `sdk-v2.0` (contracts 2.0.0); every manifest says 2.0.0; GitHub release `v2.0.0`.
